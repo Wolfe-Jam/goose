@@ -1,0 +1,62 @@
+version: 1.0.0
+title: Project Context for AGENTS.md
+author:
+  contact: Wolfe-Jam
+description: Enhance your AGENTS.md — add structured, machine-readable project context at the top, and keep the Markdown for instructions. Goose stops re-guessing your stack every session and spends its tokens on the work.
+instructions: |
+  Without durable context, every session starts with goose searching the repo
+  to work out what the project is — and a fresh search returns slightly
+  different answers each time. That costs tokens, and worse, it induces drift:
+  the agent's picture of your project varies from one request to the next —
+  even within a single session.
+
+  This recipe splits the lanes. A compact, structured context block carries the
+  facts (language, runtime, build, who the project is for, why it exists) — the
+  same answer every request, for almost no tokens. The Markdown below stays
+  yours — freed to provide focused instructions, not facts. Goose reads both
+  natively.
+
+  The block is added non-destructively: everything already written in AGENTS.md
+  is preserved, and re-runs update the block in place.
+activities:
+  - Detect the project's stack from its real files
+  - Fill in who it's for, why it exists, and how it runs — from the code, never invented
+  - Add a structured context block to AGENTS.md, preserving everything already written
+  - Re-run any time the project changes — the block updates in place
+extensions:
+  - type: builtin
+    name: developer
+    display_name: Developer
+    timeout: 300
+    bundled: true
+prompt: |
+  Enhance this project's AGENTS.md with structured, machine-readable context,
+  preserving every instruction already written in it. Use `npx -y faf-cli@latest ...`
+  (or `bunx faf-cli@latest ...`) — the @latest pin matters: package runners
+  cache, and this recipe relies on current behavior.
+
+  1. Detect the stack from the project's real files:
+     `npx -y faf-cli@latest init`
+     This writes project.faf and reports what it could not detect on its own —
+     typically who the project is for, why it exists, where it runs.
+
+  2. Fill in what only the code can tell you. Read the project, then set each
+     flagged field — short, and true to the code, never invented:
+     `npx -y faf-cli@latest edit human_context.who   "<who it's for>"`
+     `npx -y faf-cli@latest edit human_context.why   "<why it exists>"`
+     `npx -y faf-cli@latest edit human_context.where "<where it runs>"`
+
+  3. Write the context block into AGENTS.md:
+     `npx -y faf-cli@latest export --agents`
+     This is non-destructive: the structured block sits at the top of the file
+     and everything already written below it is preserved. Re-runs update the
+     block in place.
+
+  4. Check completeness:
+     `npx -y faf-cli@latest score`
+     The score is context coverage, not a grade. Low means you're still being
+     asked to guess — more context closes it. At 100%, nothing is guessed.
+
+  Result: one AGENTS.md, two lanes. Structured data defines the project —
+  the same answer every request, no re-searching, no drift. The Markdown provides
+  focused instructions. Spend the tokens on the work.
