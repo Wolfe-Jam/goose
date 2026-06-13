@@ -35,12 +35,13 @@ prompt: |
   (or `bunx faf-cli@latest ...`) — the @latest pin matters: package runners
   cache, and this recipe relies on current behavior.
 
-  1. Detect the stack (first run only). If there is no project.faf yet:
-     `npx -y faf-cli@latest init`
-     This writes project.faf and reports what it could not detect on its own —
-     typically who the project is for, why it exists, where it runs.
-     If project.faf already exists, skip this step — your context is preserved;
-     re-running the recipe just refreshes the block in step 3.
+  1. Detect the stack from the project's real files:
+     - First run (no project.faf yet): `npx -y faf-cli@latest init`
+     - Re-run (project.faf already exists): `npx -y faf-cli@latest auto`
+       — re-detects the current stack and keeps the human context you set, so a
+       re-run reflects the current project, not stale fields.
+     Either way it reports what it could not detect on its own — typically who
+     the project is for, why it exists, where it runs.
 
   2. Fill in what only the code can tell you. Read the project, then set each
      flagged field — short, and true to the code, never invented:
