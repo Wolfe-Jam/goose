@@ -2,7 +2,7 @@ version: 1.0.0
 title: Project Context for AGENTS.md
 author:
   contact: Wolfe-Jam
-description: Enhance your AGENTS.md — add structured, machine-readable project context at the top, and keep the Markdown for instructions. Goose stops re-guessing your stack every session and spends its tokens on the work.
+description: Enhance your AGENTS.md — add structured, machine-readable project context at the top, and keep the Markdown for instructions. goose stops re-guessing your stack every session and spends its tokens on the work.
 instructions: |
   Without durable context, every session starts with goose searching the repo
   to work out what the project is — and a fresh search returns slightly
@@ -13,7 +13,7 @@ instructions: |
   This recipe splits the lanes. A compact, structured context block carries the
   facts (language, runtime, build, who the project is for, why it exists) — the
   same answer every request, for almost no tokens. The Markdown below stays
-  yours — freed to provide focused instructions, not facts. Goose reads both
+  yours — freed to provide focused instructions, not facts. goose reads both
   natively.
 
   The block is added non-destructively: everything already written in AGENTS.md
