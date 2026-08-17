@@ -1122,8 +1122,8 @@ impl GooseAcpAgent {
         use goose_providers::model::ModelConfig;
 
         let model_info =
-            crate::providers::canonical::maybe_get_canonical_model(&req.provider, &req.model).map(
-                |canonical_model| CanonicalModelInfoDto {
+            crate::providers::canonical::maybe_get_canonical_model(&req.provider, &req.model)
+                .map(|canonical_model| CanonicalModelInfoDto {
                     provider: req.provider.clone(),
                     model: req.model.clone(),
                     context_limit: canonical_model.limit.context,
@@ -1136,8 +1136,34 @@ impl GooseAcpAgent {
                     cache_read_token_cost: canonical_model.cost.cache_read,
                     cache_write_token_cost: canonical_model.cost.cache_write,
                     currency: "$".to_string(),
-                },
-            );
+                })
+                .or_else(|| {
+                    // Not in the bundled canonical registry (e.g. a custom provider) —
+                    // fall back to the provider's own declared model config, if any.
+                    declarative_providers::custom_provider_model_info(&req.provider, &req.model)
+                        .map(|model_info| CanonicalModelInfoDto {
+                            provider: req.provider.clone(),
+                            model: req.model.clone(),
+                            context_limit: model_info.context_limit,
+                            max_output_tokens: None,
+                            reasoning: if model_info.reasoning {
+                                true
+                            } else {
+                                ModelConfig::new(&req.model).is_reasoning_model()
+                            },
+                            // ModelInfo costs are USD per token; this DTO matches the
+                            // canonical `Pricing` convention of USD per million tokens.
+                            input_token_cost: model_info
+                                .input_token_cost
+                                .map(|c| c * 1_000_000.0),
+                            output_token_cost: model_info
+                                .output_token_cost
+                                .map(|c| c * 1_000_000.0),
+                            cache_read_token_cost: None,
+                            cache_write_token_cost: None,
+                            currency: model_info.currency.unwrap_or_else(|| "$".to_string()),
+                        })
+                });
 
         Ok(CanonicalModelInfoResponse { model_info })
     }

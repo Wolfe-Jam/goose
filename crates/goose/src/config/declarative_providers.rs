@@ -8,6 +8,8 @@ use crate::providers::inventory::declarative_inventory_identity;
 use crate::providers::ollama_def::OllamaProviderDef;
 use crate::providers::openai_def::OpenAiProviderDef;
 use anyhow::Result;
+use goose_providers::canonical::{maybe_get_canonical_model, Pricing};
+use goose_providers::conversation::token_usage::Usage;
 use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 use std::str::FromStr;
@@ -506,6 +508,49 @@ pub fn register_declarative_provider(
     }
 }
 
+/// Look up a custom provider's declared `ModelInfo` for one of its models, by name.
+///
+/// Returns `None` if `provider_name` isn't a registered custom provider, or the model
+/// isn't declared in its config.
+pub(crate) fn custom_provider_model_info(provider_name: &str, model_name: &str) -> Option<ModelInfo> {
+    let loaded = load_provider(provider_name).ok()?;
+    loaded
+        .config
+        .models
+        .into_iter()
+        .find(|m| m.name == model_name)
+}
+
+/// Look up config-declared per-token costs for a custom-provider model, converted to
+/// the canonical per-million-token `Pricing` shape used by `Pricing::estimate_cost`.
+///
+/// Returns `None` if the provider or model isn't found, or costs aren't set for it.
+fn custom_provider_model_pricing(provider_name: &str, model_name: &str) -> Option<Pricing> {
+    let model = custom_provider_model_info(provider_name, model_name)?;
+    let input = model.input_token_cost?;
+    let output = model.output_token_cost?;
+    Some(Pricing {
+        input: Some(input * 1_000_000.0),
+        output: Some(output * 1_000_000.0),
+        cache_read: None,
+        cache_write: None,
+    })
+}
+
+/// Estimate USD cost for a provider/model's usage, preferring the bundled canonical
+/// registry and falling back to a custom provider's config-declared per-token costs
+/// when the registry has no pricing for this provider/model pair (corporate gateways,
+/// regional inference hosts, self-hosted routers, or brand-new models the registry
+/// hasn't caught up to yet).
+pub fn estimate_model_cost(provider: &str, model: &str, usage: &Usage) -> Option<f64> {
+    if let Some(cost) = maybe_get_canonical_model(provider, model)
+        .and_then(|canonical| canonical.cost.estimate_cost(usage))
+    {
+        return Some(cost);
+    }
+    custom_provider_model_pricing(provider, model)?.estimate_cost(usage)
+}
+
 fn huggingface_declarative_inventory_configured(config: &DeclarativeProviderConfig) -> bool {
     huggingface_declarative_inventory_configured_from_sources(
         config,
@@ -793,6 +838,129 @@ mod tests {
     fn test_load_provider_rejects_path_segments() {
         assert!(load_provider("custom_../secret").is_err());
         assert!(load_provider("custom_..\\secret").is_err());
+    }
+
+    fn write_custom_provider_with_costs(
+        id: &str,
+        model_name: &str,
+        input_token_cost: Option<f64>,
+        output_token_cost: Option<f64>,
+    ) {
+        let custom_dir = custom_providers_dir();
+        std::fs::create_dir_all(&custom_dir).unwrap();
+        let content = format!(
+            r#"{{
+  "name": "{id}",
+  "engine": "openai",
+  "display_name": "Custom Gateway",
+  "description": "corporate gateway",
+  "api_key_env": "",
+  "base_url": "https://gateway.example.invalid/v1/chat/completions",
+  "models": [{{
+    "name": "{model_name}",
+    "context_limit": 128000,
+    "input_token_cost": {input},
+    "output_token_cost": {output}
+  }}],
+  "requires_auth": false
+}}"#,
+            input = input_token_cost
+                .map(|c| c.to_string())
+                .unwrap_or_else(|| "null".to_string()),
+            output = output_token_cost
+                .map(|c| c.to_string())
+                .unwrap_or_else(|| "null".to_string()),
+        );
+        std::fs::write(custom_dir.join(format!("{id}.json")), content).unwrap();
+    }
+
+    #[test]
+    fn test_custom_provider_model_pricing_converts_per_token_to_per_million() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let temp_root = temp_dir.path().display().to_string();
+        let _guard = env_lock::lock_env([("GOOSE_PATH_ROOT", Some(temp_root.as_str()))]);
+
+        write_custom_provider_with_costs(
+            "custom_gateway",
+            "gateway-model",
+            Some(0.000_003),
+            Some(0.000_015),
+        );
+
+        let pricing = custom_provider_model_pricing("custom_gateway", "gateway-model")
+            .expect("declared costs should resolve to Pricing");
+        assert_eq!(pricing.input, Some(3.0));
+        assert_eq!(pricing.output, Some(15.0));
+        assert_eq!(pricing.cache_read, None);
+        assert_eq!(pricing.cache_write, None);
+    }
+
+    #[test]
+    fn test_custom_provider_model_pricing_none_without_declared_costs() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let temp_root = temp_dir.path().display().to_string();
+        let _guard = env_lock::lock_env([("GOOSE_PATH_ROOT", Some(temp_root.as_str()))]);
+
+        write_custom_provider_with_costs("custom_gateway", "gateway-model", None, None);
+
+        assert!(custom_provider_model_pricing("custom_gateway", "gateway-model").is_none());
+    }
+
+    #[test]
+    fn test_custom_provider_model_pricing_none_for_unknown_model() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let temp_root = temp_dir.path().display().to_string();
+        let _guard = env_lock::lock_env([("GOOSE_PATH_ROOT", Some(temp_root.as_str()))]);
+
+        write_custom_provider_with_costs(
+            "custom_gateway",
+            "gateway-model",
+            Some(0.000_003),
+            Some(0.000_015),
+        );
+
+        assert!(custom_provider_model_pricing("custom_gateway", "other-model").is_none());
+    }
+
+    #[test]
+    fn test_estimate_model_cost_falls_back_to_custom_provider_config() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let temp_root = temp_dir.path().display().to_string();
+        let _guard = env_lock::lock_env([("GOOSE_PATH_ROOT", Some(temp_root.as_str()))]);
+
+        write_custom_provider_with_costs(
+            "custom_gateway",
+            "gateway-model",
+            Some(0.000_003),
+            Some(0.000_015),
+        );
+
+        let usage = Usage {
+            input_tokens: Some(1_000_000),
+            output_tokens: Some(1_000_000),
+            ..Default::default()
+        };
+
+        // Not in the bundled canonical registry, so this only resolves via the
+        // custom-provider fallback: 1M input @ $3/M + 1M output @ $15/M = $18.
+        let cost = estimate_model_cost("custom_gateway", "gateway-model", &usage)
+            .expect("custom-provider declared costs should produce an estimate");
+        assert!((cost - 18.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_estimate_model_cost_none_when_no_pricing_anywhere() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let temp_root = temp_dir.path().display().to_string();
+        let _guard = env_lock::lock_env([("GOOSE_PATH_ROOT", Some(temp_root.as_str()))]);
+
+        let usage = Usage {
+            input_tokens: Some(100),
+            output_tokens: Some(50),
+            ..Default::default()
+        };
+
+        assert!(estimate_model_cost("not_a_registered_provider", "not-a-model", &usage).is_none());
     }
 
     #[test]
