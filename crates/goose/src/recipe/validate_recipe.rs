@@ -415,11 +415,9 @@ response:
 
         let error =
             validate_recipe_template_from_content(&recipe.to_yaml().unwrap(), None).unwrap_err();
-        assert!(
-            error
-                .to_string()
-                .contains("Unnecessary parameter definitions: message")
-        );
+        assert!(error
+            .to_string()
+            .contains("Unnecessary parameter definitions: message"));
     }
 
     #[test]
@@ -472,10 +470,8 @@ parameters:
     description: unused
 "#;
         let error = validate_recipe_template_from_content(recipe_content, None).unwrap_err();
-        assert!(
-            error
-                .to_string()
-                .contains("Unnecessary parameter definitions: message")
-        );
+        assert!(error
+            .to_string()
+            .contains("Unnecessary parameter definitions: message"));
     }
 }
